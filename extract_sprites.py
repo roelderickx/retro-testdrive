@@ -6,16 +6,31 @@ import os
 from PIL import Image
 
 TESTDRIVE_SOURCE_DIR = 'testdrive'
+ARC_SOURCE_DIR = 'arcfiles'
 SPRITE_DEST_DIR = 'sprites'
 
 COLORSPACE_CGA = \
     [ (  0,  0,  0, 255), (  0, 255, 255, 255), (255,   0, 255, 255), (255, 255, 255, 255) ]
 
 COLORSPACE_EGA = \
-    [ (  0,  0,  0, 255), (  0,   0, 170, 255), (  0, 170,   0, 255), (  0, 170, 170, 255),
-      (170,  0,  0, 255), (170,   0, 170, 255), (170,  85,   0, 255), (170, 170, 170, 255),
-      ( 85, 85, 85, 255), ( 85,  85, 255, 255), ( 85, 255,  85, 255), ( 85, 255, 255, 255),
-      (255, 85, 85, 255), (255,  85, 255, 255), (255, 255,  85, 255), (255, 255, 255, 255) ]
+    [ (  0,  0,  0, 255), # black
+      (  0,   0, 170, 255), # blue
+      (  0, 170,   0, 255), # green
+      (  0, 170, 170, 255), # cyan
+      (170,  0,  0, 255), # red
+      (170,   0, 170, 255), # magenta
+      (170, 170, 170, 255), # lightgrey
+      (255, 255,  85, 255), # yellow
+
+      (  0,  0,  0, 255), # black (there is no bright magenta)
+      ( 85, 85, 85, 255), # darkgrey
+      (170,  85,   0, 255), # brown
+      ( 85, 255,  85, 255), # bright green
+      ( 85, 255, 255, 255), # bright cyan
+      (255, 85, 85, 255), # bright red
+      ( 85,  85, 255, 255), # bright blue
+      (255, 255, 255, 255) # white
+    ]
 
 class PackedSpriteFile:
     def __init__(self, filename):
@@ -25,7 +40,6 @@ class PackedSpriteFile:
         # file header
         self.__packed_content_length = 0
         self.__unpacked_content_length = 0
-        self.__is_packed = False
         # unpacked contents
         self.__contents = [ ]
         self.__load_contents(filename)
@@ -39,7 +53,7 @@ class PackedSpriteFile:
         (base, ext) = os.path.splitext(filename)
         if ext.upper() == '.CMP':
             self.__color_space = COLORSPACE_CGA
-        elif ext.upper() == '.PES':
+        elif ext.upper() == '.EMP':
             self.__color_space = COLORSPACE_EGA
         else:
             raise Exception('Unsupported file type')
@@ -51,48 +65,21 @@ class PackedSpriteFile:
 
     def __read_header(self, f):
         self.__unpacked_content_length = self.__read_bytes(f, 4)
-        if self.__unpacked_content_length == 0x646b6350:
-            '''
-            Pckd
-            4 bytes = filesize-16 (accolade.pes: 2197 -> 2181)
-            4 bytes = unpacked size (accolade.pes: 4486)
-            4 bytes unknown
-            '''
-            # magic bytes Pckd found
-            self.__is_packed = True
-            self.__packed_content_length = self.__read_bytes(f, 4)
-            self.__unpacked_content_length = self.__read_bytes(f, 4)
-            # followed by two unknown bytes, always 0x08 ???
-            unknown1 = self.__read_bytes(f, 2)
-            # and another two unknown bytes
-            unknown2 = self.__read_bytes(f, 2)
-        else:
-            # subtract the first 4 bytes containing the length
-            self.__is_packed = False
-            self.__unpacked_content_length -= 4
+        # subtract the first 4 bytes containing the length
+        self.__unpacked_content_length -= 4
 
 
     def __unpack_content(self, f):
-        if self.__is_packed:
-            # TODO apply huffman tree???
-            # skip some bytes
-            for i in range(13):
-                b = self.__read_bytes(f, 1)
-            # print first 20 bytes as binary
-            for i in range(20):
-                b = self.__read_bytes(f, 1)
-                print('{:08b}'.format(b), end='')
-            print()
-        else:
-            # runlength encoding, 0x83 is the magic byte
-            while len(self.__contents) < self.__unpacked_content_length:
-                b = self.__read_bytes(f, 1)
-                if b == 0x83:
-                    next_b = self.__read_bytes(f, 1)
-                    amount = self.__read_bytes(f, 1)
-                    self.__contents += [ next_b ] * amount
-                else:
-                    self.__contents.append(b)
+        # CGA: runlength encoding, 0x83 is the magic byte
+        # EGA: files are considered decompressed by arc
+        while len(self.__contents) < self.__unpacked_content_length:
+            b = self.__read_bytes(f, 1)
+            if self.__color_space == COLORSPACE_CGA and b == 0x83:
+                next_b = self.__read_bytes(f, 1)
+                amount = self.__read_bytes(f, 1)
+                self.__contents += [ next_b ] * amount
+            else:
+                self.__contents.append(b)
 
 
     def __load_contents(self, filename):
@@ -167,6 +154,7 @@ class PackedSpriteFile:
                     pixel_byte = self.__contents[offset + mapped_plane * plane_size + vert_offset]
                 else:
                     pixel_byte = self.__contents[offset + mapped_plane * plane_size + horiz_offset]
+                #pixel_byte = self.__contents[offset + mapped_plane * plane_size + horiz_offset]
                 pixel_color = (pixel_color << 1) + ((pixel_byte >> (7 - x % 8)) % 2)
             else:
                 pixel_color = (pixel_color << 1)
@@ -249,6 +237,7 @@ def main():
     except FileExistsError:
         pass
 
+    # CGA
     for filename in os.listdir(TESTDRIVE_SOURCE_DIR):
         (basename, ext) = os.path.splitext(filename)
         if ext in [ '.CMP' ]:
@@ -263,6 +252,23 @@ def main():
                 # continue to the next file
                 print(e)
                 pass
+
+    # EGA
+    for filename in os.listdir(ARC_SOURCE_DIR):
+        (basename, ext) = os.path.splitext(filename)
+        if ext in [ '.EMP' ]:
+            full_path_name = os.path.join(ARC_SOURCE_DIR, filename)
+            print('Processing %s' % full_path_name)
+            try:
+                sprite_file = PackedSpriteFile(full_path_name)
+                for sprite in sprite_file.get_sprite_list():
+                    output_filename = os.path.join(SPRITE_DEST_DIR, filename) + '.' + sprite + '.png'
+                    sprite_file.save_image(sprite, output_filename)
+            except Exception as e:
+                # continue to the next file
+                print(e)
+                pass
+
 
 
 main()
